@@ -1,0 +1,250 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                   String          @id @default(cuid())
+  name                 String?
+  email                String          @unique
+  emailVerified        DateTime?
+  image                String?
+  net_spend            Float?          @default(0)
+  input_token_usage    Int?            @default(0)
+  output_token_usage   Int?            @default(0)
+  max_lesson_sessions  Int?            @default(100)
+  max_lesson_creation  Int?            @default(5)
+  quiz_usage           Int?            @default(0)
+  published_quiz_usage Int?            @default(0)
+  max_quiz_previews    Int?            @default(15)
+  max_quiz_creation    Int?            @default(10)
+  max_net_spend        Float?          @default(1)
+  max_documents        Int?            @default(5)
+  max_document_size    Int?            @default(5)
+  accounts          Account[]
+  sessions          Session[]
+  lessons           Lesson[]
+  lesson_sessions   LessonSession[]
+  Document          Document[]
+  ModuleAttempt     ModuleAttempt[]
+  InteractionLog    InteractionLog[]
+  LessonModuleState LessonModuleState[]
+  // Optional for WebAuthn support
+  Authenticator        Authenticator[]
+
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @default(now()) @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @default(now()) @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+// Optional for WebAuthn support
+model Authenticator {
+  credentialID         String  @unique
+  userId               String
+  providerAccountId    String
+  credentialPublicKey  String
+  counter              Int
+  credentialDeviceType String
+  credentialBackedUp   Boolean
+  transports           String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, credentialID])
+}
+
+// default id is nanoId, which is a unique string
+model Lesson {
+  id                String              @id @default(dbgenerated())
+  name              String
+  description       String
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  modules           Module[]
+  sessions          LessonSession[]
+  LessonMessage     LessonMessage[]
+  InteractionLog    InteractionLog[]
+  LessonModuleState LessonModuleState[]
+}
+
+model LessonSession {
+  id              String    @id @default(uuid()) // Use UUID for unique session IDs
+  lessonId        String
+  userId          String
+  startTime       DateTime
+  endTime         DateTime? // Nullable, as the session might not be completed yet
+  completed       Boolean   @default(false)
+  elapsedTime     Int? // Nullable, represents total elapsed time in seconds
+  currentModuleId Int? // Nullable, references the ID of the current Module
+  lastChangeTime  DateTime? // Nullable, tracks the time of the last module change (we can use this to calculate time spent on each module)
+
+  lesson                 Lesson                   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  user                   User                     @relation(fields: [userId], references: [id])
+  currentModule          Module?                  @relation(fields: [currentModuleId], references: [id])
+  messages               LessonMessage[] // Messages sent during the session
+  ModuleAttempt          ModuleAttempt[]
+  GeneratedModuleContent GeneratedModuleContent[]
+  LessonModuleState      LessonModuleState[]
+
+  @@index([currentModuleId]) // Helps with efficient querying by currentModuleId
+}
+
+model Module {
+  id            Int     @id @default(autoincrement())
+  lessonId      String
+  moduleNumber  Int
+  moduleType    String
+  topic         String
+  description   String
+  question      String? // Optional field for a question
+  options       String? // JSON stringified array of options, since Prisma doesn't support array types directly
+  text_content  String? // Optional field for text content
+  isInteractive Boolean @default(false) // Flag to indicate if the module is interactive
+  answer        String? // Optional field for the answer to the question
+  answers       String? // JSON stringified array of answers, since Prisma doesn't support array types directly
+
+  lesson                 Lesson                   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  lessonSessions         LessonSession[]
+  LessonMessage          LessonMessage[]
+  ModuleAttempt          ModuleAttempt[]
+  InteractionLog         InteractionLog[]
+  GeneratedModuleContent GeneratedModuleContent[]
+  LessonModuleState      LessonModuleState[]
+
+  @@unique([lessonId, moduleNumber]) // Ensures moduleNumber is unique within a lesson
+}
+
+model LessonModuleState {
+  id           Int           @id @default(autoincrement())
+  userId       String
+  lessonId     String
+  sessionId    String
+  moduleId     Int
+  completed    Boolean       @default(false)
+  lastAccessed DateTime      @default(now())
+  lesson       Lesson        @relation(fields: [lessonId], references: [id])
+  module       Module        @relation(fields: [moduleId], references: [id])
+  user         User          @relation(fields: [userId], references: [id])
+  session      LessonSession @relation(fields: [sessionId], references: [id])
+
+  @@index([userId, lessonId, moduleId, sessionId]) // Helps with efficient querying
+}
+
+model Document {
+  id          Int    @id @default(autoincrement())
+  name        String
+  path        String
+  type        String
+  contextSize Int
+  userId      String
+  user        User   @relation(fields: [userId], references: [id])
+}
+
+model LessonMessage {
+  id        String         @id
+  content   String
+  createdAt DateTime       @default(now())
+  role      String
+  moduleId  Int // Make moduleId nullable, not every message requires it
+  lessonId  String
+  sessionId String
+  isSystem  Boolean        @default(false) // Flag to indicate system-generated messages
+  session   LessonSession? @relation(fields: [sessionId], references: [id])
+  module    Module         @relation(fields: [moduleId], references: [id])
+  lesson    Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([id, sessionId])
+  @@index([sessionId, moduleId, lessonId])
+}
+
+model ModuleAttempt {
+  id              Int      @id @default(autoincrement())
+  moduleId        Int
+  userId          String
+  lessonSessionId String 
+  attemptNumber   Int // Tracks the number of attempts made by the user on this module
+  success         Boolean // Indicates whether the attempt was successful
+  response        String? // Optionally store the user's response for the attempt
+  timestamp       DateTime @default(now()) // Records the time of the attempt
+
+  module        Module        @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id])
+  lessonSession LessonSession @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+
+  @@index([moduleId, userId, lessonSessionId]) // Facilitates efficient querying by moduleId, userId, and lessonSessionId
+}
+
+model InteractionLog {
+  id              Int      @id @default(autoincrement())
+  userId          String
+  lessonId        String?
+  moduleId        Int?
+  interactionType String // E.g., "LessonCompleted", "ModuleStarted", "AttemptedQuestion", "TimeSpent"
+  details         String? // Additional details as JSON string, such as time spent, attempt number, etc.
+  timestamp       DateTime @default(now())
+  data            String? // Additional data as JSON string, such as the user's response, etc.
+
+  user   User    @relation(fields: [userId], references: [id])
+  lesson Lesson? @relation(fields: [lessonId], references: [id])
+  module Module? @relation(fields: [moduleId], references: [id])
+
+  @@index([userId, lessonId, moduleId]) // Helps with efficient querying
+}
+
+model GeneratedModuleContent {
+  id            Int           @id @default(autoincrement())
+  timestamp     DateTime      @default(now())
+  moduleId      Int
+  content       String
+  contentType   String
+  contentOrder  Int
+  sessionID     String
+  module        Module        @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  lessonSession LessonSession @relation(fields: [sessionID], references: [id], onDelete: Cascade)
+
+  @@unique([moduleId, contentOrder])
+}
